@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>
+        <link rel="stylesheet" href="https://unpkg.com/muse-ui/dist/muse-ui.css">
+        <script src="https://unpkg.com/muse-ui/dist/muse-ui.js"></script>
+        <link rel="stylesheet" href="https://fonts.loli.net/css?family=Roboto:300,400,500,700,400italic">
+        <link rel="stylesheet" href="https://cdn.bootcss.com/material-design-icons/3.0.1/iconfont/material-icons.css">
+        <style>
+            :root{
+                font-family: Roboto;
+            }
+            .mu-appbar{
+                margin-bottom: 1em;
+            }
+            .mu-paper{
+                padding: 1em;
+            }
+            .title{
+                font-weight: bold;
+            }
+            .container{
+                display: flex;
+                flex-direction: row;
+                flex-wrap: wrap;
+                align-items: flex-start;
+                justify-content: space-between;
+            }
+            .container > *{
+                margin-right: 2em;
+                margin-bottom: 2em;
+                min-width: 15%;
+            }
+            #fileError, #lyricError{
+                animation: error ease .5s;
+                position: relative;
+                color: red;
+                display: inline-block;
+                padding-left: 2em;
+            }
+            #fileError:before, #lyricError:before{
+                font-family: 'Material Icons';
+                font-weight: normal;
+                font-style: normal;
+                font-size: 24px;
+                display: inline-block;
+                line-height: 1;
+                text-transform: none;
+                letter-spacing: normal;
+                word-wrap: normal;
+                white-space: nowrap;
+                direction: ltr;
+                -webkit-font-smoothing: antialiased;
+                text-rendering: optimizeLegibility;
+                -moz-osx-font-smoothing: grayscale;
+                font-feature-settings: 'liga';
+                content: "error";
+                vertical-align: bottom;
+            }
+            @keyframes error{
+                0% { left: 0 }
+                25% { left: -1em; }
+                50% { left: 0 }
+                75% { left: 1em; }
+                100% { left: 0 }
+            }
+            #meta-card > div > *{
+                display: block;
+                padding: .5em 0;
+                min-width: 19em;
+            }
+            input[type=file]{
+                display: none;
+            }
+            .meta-name, .text-time{
+                display: inline-block;
+                width: 4em;
+                margin: 0;
+                padding: 0;
+                min-height: unset;
+            }
+            .meta-text, .text-text{
+                display: inline-block;
+                width: 14em;
+                margin: 0;
+                padding: 0;
+                min-height: unset;
+            }
+            .text-text{
+                width: auto;
+            }
+            .mu-text-field-input{
+                max-width: 100%;
+            }
+            #lyric-card{
+                width: 100%;
+            }
+            .mu-button{
+                width: 100%;
+                margin: .5em 0;
+            }
+            #lyric-card > div > div{
+                width: 100%;
+                padding: .5em 0;
+                display: grid;
+                grid-template-columns: 5em auto;
+            }
+            .mu-checkbox{
+                vertical-align: bottom;
+            }
+            .mu-fab-button{
+                width: 56px;
+                position: fixed;
+                bottom: 1em;
+                right: 1em;
+            }
+            #audio-control{
+                width: 256px;
+                display: grid;
+                height: 36px;
+                grid-template-columns: 36px auto;
+            }
+        </style>
+    </head>
+    <body>
+        <div id="app">
+            <mu-appbar style="width: 100%;" title="LRC编辑器" color="primary"></mu-appbar>
+            <mu-container id="container">
+                <mu-paper :z-depth="3">
+                    <div>
+                        <div class="title">音乐</div>
+                        <label for="file">
+                            <mu-button @click="selectFile()">上传文件</mu-button>
+                            <div id="fileError" v-if="fileError">{{ fileError }}</div>
+                        </label>
+                        <input type="file" id="file" @change="changeFile" accept="audio/*" hidden />
+                        <div id="audio-control">
+                            <div @click="!canplay || (paused = !paused)">
+                                <mu-icon value="play_arrow" v-show="paused"></mu-icon>
+                                <mu-icon value="pause" v-show="!paused"></mu-icon>
+                            </div>
+                            <mu-slider :min="0" :max="length" v-model="time"
+                                :disabled="canplay ? null : 'disabled'">
+                            </mu-slider>
+                        </div>
+                        <audio :src="songURL" @canplay="canplay = true" @timeupdate="timeupdate"
+                            @playing="stateChange" @pause="stateChange">
+                        </audio>
+                    </div>
+                </mu-paper>
+                <mu-paper :z-depth="3">
+                    <div>
+                        <div class="title">文件</div>
+                        <label for="lyric">
+                            <mu-button @click="selectLyric()">上传文件</mu-button>
+                            <div id="lyricError" v-if="lyricError">{{ lyricError }}</div>
+                        </label>
+                        <input type="file" id="lyric" @change="changeLyric" accept=".lrc" hidden />
+                        <mu-button id="download" @click="downloadLyric()" disable>下载文件</mu-button>
+                        <label><input type="checkbox" v-model="compress"></mu-checkbox>合并歌词重复行</label>
+                    </div>
+                </mu-paper>
+                <mu-paper id="meta-card" :z-depth="3">
+                    <div>
+                        <div class="title">元数据</div>
+                        <div v-for="smeta in (lrc ? lrc.meta : [])" :key="smeta.id">
+                            <mu-text-field @input="detectDeleteMeta($event, smeta.id)"
+                                :id="`meta-${smeta.name}`" class="meta-name" v-model="smeta.name"></mu-text-field>
+                            <mu-text-field class="meta-text" v-model="smeta.text"></mu-text-field>
+                        </div>
+                        <div>
+                            <mu-text-field id="newMeta" class="meta-name" @input="createNewMeta"></mu-text-field>
+                        </div>
+                    </div>
+                </mu-paper>
+                <mu-paper id="lyric-card" :z-depth="3">
+                    <div>
+                        <div class="title">歌词</div>
+                        <div v-for="stext in (lrc ? lrc.text : [])" :key="stext.id"
+                            v-bind:style="{ background: activiteId == stext.id ? 'yellow' : 'none' }">
+                            <mu-text-field @input="detectDeleteText($event, stext.id)"
+                                :id="`time-${stext.id}`" class="text-time" v-model="stext.time"
+                                @focus="selected = stext.id"></mu-text-field>
+                            <mu-text-field class="text-text" v-model="stext.text"></mu-text-field>
+                        </div>
+                        <div>
+                            <mu-text-field id="newText" class="text-time" @input="createNewText"></mu-text-field>
+                        </div>
+                    </div>
+                </mu-paper>
+            </mu-container>
+            <mu-button :disabled="selected ? null : 'disabled'" fab icon
+                @click="timeInsert()">
+                <mu-icon value="access_time"></mu-icon>
+            </mu-button>
+        </div>
+        <script>
+            /*
+            Copyright 2017 Kenneth Jiang
+
+            Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
+            documentation files (the "Software"), to deal in the Software without restriction, including without limitation
+            the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and
+            to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+            The above copyright notice and this permission notice shall be included in all copies or substantial portions of
+            the Software.
+            THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+            THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+            AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF
+            CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+            DEALINGS IN THE SOFTWARE
+            */
+            function download(data, filename, mime){
+                var blob = new Blob([data], {type: mime || 'application/octet-stream'});
+                if (typeof window.navigator.msSaveBlob !== 'undefined') {
+                    // IE workaround for "HTML7007: One or more blob URLs were
+                    // revoked by closing the blob for which they were created.
+                    // These URLs will no longer resolve as the data backing
+                    // the URL has been freed."
+                    window.navigator.msSaveBlob(blob, filename);
+                } else {
+                    var blobURL = window.URL.createObjectURL(blob);
+                    var tempLink = document.createElement('a');
+                    tempLink.style.display = 'none';
+                    tempLink.href = blobURL;
+                    tempLink.setAttribute('download', filename);
+
+                    // Safari thinks _blank anchor are pop ups. We only want to set _blank
+                    // target if the browser does not support the HTML5 download attribute.
+                    // This allows you to download files in desktop safari if pop up blocking
+                    // is enabled.
+                    if (typeof tempLink.download === 'undefined') {
+                        tempLink.setAttribute('target', '_blank');
+                    }
+
+                    document.body.appendChild(tempLink);
+                    tempLink.click();
+                    document.body.removeChild(tempLink);
+                    window.URL.revokeObjectURL(blobURL);
+                }
+            }
+        </script>
+        <script>
+            function parseLRC(lyric){
+                var lines = lyric.split("\n");
+
+                var metaDatas = [];
+                var textLines = [];
+
+                lines.forEach((line) => {
+                    if (line.match("^\\[([a-z]+):(.*)\\]$")) {
+                        var tag = line.match("^\\[([a-z]+):(.*)\\]$");
+                        metaDatas.push({name: tag[1], text: tag[2], id: Math.floor(Math.random() * 2 ** 32)})
+                    } else if (line.match("^((\\[([0-9]{2}:[0-9]{2}.([0-9]{1,3}){0,1})\\])+)(.*)$")) {
+                        var tag = line.match("^((\\[([0-9]{2}:[0-9]{2}.([0-9]{1,3}){0,1})\\])+)(.*)$");
+                        var timeTag = tag[1];
+                        var text = tag[tag.length - 1];
+                        var re = /\[([0-9]{2}):([0-9]{2}).([0-9]{1,3})\]/g;
+                        var time;
+                        while (time = re.exec(timeTag)) {
+                            var milliSecond = time[3].length == 3 ? time[3] * 1 : time[3] * 10;
+                            textLines.push({
+                                time: Math.floor((time[1] * 60 + time[2] * 1 + milliSecond / 1000) * 1000) / 1000,
+                                text: text,
+                                id: Math.floor(Math.random() * 2 ** 32)
+                            });
+                        }
+                    }
+                });
+                textLines.sort((a, b) => a.time - b.time);
+                return {
+                    meta: metaDatas,
+                    text: textLines
+                }
+            }
+
+            function toLRC(data, compress = true){
+                function timeConvert(time) {
+                    var minute = Math.floor(time / 60);
+                    var second = Math.floor(time % 60);
+                    var milliSecond = Math.floor(time % 1 * 100);
+                    minute = minute >= 10 ? minute : "0" + minute;
+                    second = second >= 10 ? second : "0" + second;
+                    milliSecond = milliSecond >= 10 ? milliSecond : "0" + milliSecond;
+                    return `${minute}:${second}:${milliSecond}`;
+                }
+
+                var result = "";
+
+                data.meta.forEach((mdata) => {
+                    result += `[${mdata.name}:${mdata.text}]\n`;
+                });
+
+                if (compress) {
+                    var texts = [];
+                    data.text.forEach((line) => {
+                        if (!texts.includes(line.text)) texts.push(line.text);
+                    });
+                    texts.forEach((text) => {
+                        var times = [];
+                        data.text.forEach((line) => {
+                            if (line.text == text) {
+                                times.push(line.time);
+                            }
+                        });
+                        times.forEach((time) => {
+                            result += `[${timeConvert(time)}]`;
+                        });
+                        result += text;
+                        result += "\n";
+                    });
+                } else {
+                    data.text.forEach((line) => {
+                        result += `[${timeConvert(line.time)}]${line.text}\n`;
+                    });
+                }
+                return result;
+            }
+        </script>
+        <script>
+            var app = new Vue({
+                el: '#app',
+                data: {
+                    fileError: null,
+                    songURL: null,
+                    lyricError: null,
+                    lrc: {meta: [], text: []},
+                    filename: null,
+                    compress: true,
+                    selected: null,
+                    paused: true,
+                    time: 0,
+                    length: 0,
+                    canplay: false,
+                    activiteId: null
+                },
+                methods: {
+                    selectFile: function() {
+                        document.querySelector('#file').click();
+                    },
+                    changeFile: function(ev) {
+                        var files = ev.srcElement.files;
+                        if(files.length >= 1){
+                            var file = files[0];
+                            if(file.type.match("audio/[^/]*")){
+                                this.fileError = null;
+                                if(this.songURL) {
+                                    URL.revokeObjectURL(this.songURL);
+                                }
+                                this.songURL = URL.createObjectURL(new Blob([file]));
+                            } else {
+                                this.fileError = "文件不是音频文件";
+                            }
+                        }
+                    },
+                    selectLyric: function() {
+                        document.querySelector('#lyric').click();
+                    },
+                    changeLyric: function(ev) {
+                        var files = ev.srcElement.files;
+                        if(files.length >= 1){
+                            var file = files[0];
+                            var reader = new FileReader();
+                            reader.onloadend = () => {
+                                if(reader.error){
+                                    this.lyricError = "读取时出现了错误：" + reader.error.toString();
+                                } else {
+                                    document.querySelector('#download').removeAttribute("disable");
+                                    this.lyricError = null;
+                                    var text = reader.result;
+                                    this.lrc = parseLRC(text);
+                                }
+                            };
+                            this.filename = file.name;
+                            reader.readAsText(file);
+                        }
+                    },
+                    downloadLyric: function() {
+                        download(toLRC(this.lrc, this.compress), this.filename);
+                    },
+                    createNewMeta: function(ev) {
+                        document.querySelector('#newMeta').value = "";
+                        var founded = false;
+                        this.lrc.meta.forEach((meta) => {
+                            if(meta.name == ev) founded = true;
+                        })
+                        if(!founded){
+                            this.lrc.meta.push({name: ev, text: "", id: Math.floor(Math.random() * 2 ** 32)});
+                            this.$nextTick(() => {document.querySelector(`#meta-${ev}`).focus()});
+                        }
+
+                    },
+                    detectDeleteMeta: function(ev, id) {
+                        if(ev == ""){
+                            var found;
+                            for(i in this.lrc.meta){
+                                if(this.lrc.meta[i].id == id) found = i;
+                            }
+                            this.$delete(this.lrc.meta, found);
+                            document.querySelector('#newMeta').focus();
+                        }
+                    },
+                    createNewText: function(ev) {
+                        document.querySelector('#newText').value = "";
+                        var founded = false;
+                        this.lrc.text.forEach((text) => {
+                            if(text.time == ev) founded = true;
+                        })
+                        if(!founded){
+                            var id = Math.floor(Math.random() * 2 ** 32);
+                            this.lrc.text.push({time: ev, text: "", id: id});
+                            this.$nextTick(() => {document.querySelector(`#time-${id}`).focus()});
+                        }
+                    },
+                    detectDeleteText: function(ev, id) {
+                        if(ev == ""){
+                            var found;
+                            for(i in this.lrc.text){
+                                if(this.lrc.text[i].id == id) found = i;
+                            }
+                            this.$delete(this.lrc.text, found);
+                            document.querySelector('#newText').focus();
+                        }
+                    },
+                    timeInsert: function() {
+                        var found;
+                        for(i in this.lrc.text){
+                            if(this.lrc.text[i].id == this.selected) found = parseInt(i);
+                        }
+                        this.lrc.text[found].time = Math.floor(document.querySelector("audio").currentTime * 100) / 100;
+                        if(this.lrc.text[found + 1]){
+                            console.log(`#time-${this.lrc.text[found + 1].id}`);
+                            document.querySelector(`#time-${this.lrc.text[found + 1].id}`).focus();
+                        } else {
+                            this.selected = null;
+                        }
+                    },
+                    timeupdate: function(ev){
+                        this.time = ev.srcElement.currentTime;
+                    },
+                    stateChange: function(ev){
+                        this.paused = ev.srcElement.paused;
+                    }
+                },
+                watch:{
+                    paused: function() {
+                        if(this.canplay) {
+                            if(this.paused) {
+                                if(!document.querySelector("audio").paused) {
+                                    document.querySelector("audio").pause();
+                                }
+                            } else {
+                                if(document.querySelector("audio").paused) {
+                                    document.querySelector("audio").play();
+                                }
+                            }
+                        }
+                    },
+                    canplay: function() {
+                        this.length = document.querySelector("audio").duration;
+                        this.time = document.querySelector("audio").currentTime;
+                    },
+                    time: function() {
+                        if(document.querySelector("audio").currentTime != this.time)
+                            document.querySelector("audio").currentTime = this.time;
+                        var founded;
+                        this.lrc.text.forEach((text) => {
+                            if(text.time <= this.time) founded = text;
+                        });
+                        if(founded) this.activiteId = founded.id;
+                    }
+                }
+            });
+        </script>
+    </body>
+</html>
